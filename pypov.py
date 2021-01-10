@@ -82,7 +82,6 @@ class ImageToLed:
         return rr
 
     def getLedColor(self, angle, ledRPosition):
-
         redValue = 0
         greenValue = 0
         blueValue = 0
@@ -199,6 +198,7 @@ if __name__ == '__main__':
     parser.add_argument('-ap', '--angleavgpoints', type=int, help='Resolution in points of the angular average span', default=3)
     parser.add_argument('-rs', '--radialavgspan', type=int, help='Radial span to be used when computing the average color (distance)', default=10)
     parser.add_argument('-rp', '--radialavgpoints', type=int, help='Resolution in points of the radial average span', default=3)
+    parser.add_argument('-rt', '--rastertype', type=int, help='Type of raster. 0->simple, 1->advanced', default=0)
     parser.add_argument('-lco', '--ledcenteroffset', type=int, help='Offset of the first led with respect to the center', default=15)
     
 
@@ -243,11 +243,93 @@ if __name__ == '__main__':
     ledDraw = LedDraw(screen, angleIncrement, distanceBetweenLeds, args.numberleds, args.ledradius, args.ledcenteroffset)
     ledDraw.setColorMap(ledColors)
 
-    angle = 0
     raster = False
     running = True
     drawAverageArea = True
-    
+   
+    angle = 0
+    #Create a raster frame matrix where to project the led lights
+    #For every led position and for every angle get the color of the led at that position and project it into the raster frame
+    #If the (x,y) position is inside the led radius, then the color of the coordinate is the color of the led.
+    #If the (x,y) position is outside the led radius, its valus is decreased as a function of the distance to the radius*radius
+    #If the (x,y) position was already colored then its value is averaged with the new led value
+    if (args.rastertype == 1):
+        rasterFrame = []
+        for y in range(args.backgroundFrameWidth):
+            yy = []
+            for x in range(args.backgroundFrameWidth):
+                yy.append((0, 0, 0))
+            rasterFrame.append(yy)
+        
+        imgBound = img.get_rect()
+        drOffset = args.ledradius + args.ledseparation * 2
+        drResolution = 1
+        for ledIdx in range(args.numberleds):
+            ledRPosition = (args.ledcenteroffset + ledIdx * distanceBetweenLeds)
+            angleResolution = int(45 / math.fabs(ledRPosition))
+            if (angleResolution < 1):
+                angleResolution = 1
+            print ('{}'.format(angleResolution))
+            for fangle in range(0, 360, angleResolution):
+                ledXPosition = imgBound.centerx
+                ledXPosition += ledRPosition * math.cos(getAngleRads(fangle))
+                ledYPosition = imgBound.centery
+                ledYPosition += ledRPosition * math.sin(getAngleRads(fangle))
+                c1 = ledColors[ledIdx][fangle]
+                r1 = c1[0]
+                g1 = c1[1]
+                b1 = c1[2]
+
+                for dr in range(-drOffset, drOffset, drResolution):
+                    if (dr == 0):
+                        rasterAngleResolution  = 360
+                    else:
+                        rasterAngleResolution = int(45 / math.fabs(dr))
+                    #print ('{}: {}'.format(dr, rasterAngleResolution))
+                    for dangle in range(0, 360, rasterAngleResolution):
+                        xPosition = dr * math.cos(getAngleRads(dangle))
+                        xPosition += ledXPosition
+                        xPosition = int(xPosition)
+                        if ((xPosition > 0) and (xPosition < imgBound.width)):
+                            yPosition = dr * math.sin(getAngleRads(dangle))
+                            yPosition += ledYPosition
+                            yPosition = imgBound.height - yPosition
+                            yPosition = int(yPosition)
+
+                            r1c = r1
+                            g1c = g1
+                            b1c = b1
+                            if (math.fabs(dr) > args.ledradius):
+                                dist = math.fabs(dr) - args.ledradius
+                                dist *= dist
+                                r1c /= dist 
+                                r1c = int(r1c)
+                                g1c /= dist
+                                g1c = int(g1c)
+                                b1c /= dist
+                                b1c = int(b1c)
+
+                            if ((yPosition > 0) and (yPosition < imgBound.height)):
+                                #Get any existing color
+                                c2 = rasterFrame[yPosition][xPosition]
+                                r2 = c2[0]
+                                g2 = c2[1]
+                                b2 = c2[2]
+                                if (r2 == 0):
+                                    rr = r1c
+                                else:
+                                    rr = (r1c + r2) / 2
+                                if (g2 == 0):
+                                    gg = g1c
+                                else:
+                                    gg = (g1c + g2) / 2
+                                if (b2 == 0):
+                                    bb = b1c
+                                else:
+                                    bb = (b1c + b2) / 2
+                                rasterFrame[yPosition][xPosition] = (rr, gg, bb)
+                    dr += 1
+
     imgBorderColor = (255, 0, 0, args.alpha)
     while running:
         for event in pygame.event.get():
@@ -262,6 +344,7 @@ if __name__ == '__main__':
                 elif event.key == K_UP:
                     raster = not raster
 
+
         if (angle == 360):
             angle = 0
         if (angle == -1):
@@ -273,10 +356,13 @@ if __name__ == '__main__':
         screen.blit(img, imgRect)
         pygame.draw.rect(screen, imgBorderColor, imgRect, 1)
         if (raster):
-            #This is quite horrible. A better way of doing this is get the color of each led and diffuse on the surrounding pixels, summing the contribution of all the neighbours.
-            #Once the RGB of each pixel has been computed, it is a matter of calling set_at
-            for a in range(360):
-                ledDraw.draw(a, False)
+            if (args.rastertype == 0):
+                for a in range(360):
+                    ledDraw.draw(a, False)
+            else:
+                for yy, row in enumerate(rasterFrame):
+                    for xx, color in enumerate(row):
+                        screen.set_at((xx, yy), color)
         else:
             ledDraw.draw(angle, True)
             if (drawAverageArea):
